@@ -8,7 +8,7 @@ SicGo is an independent macOS utility for temporary screenshot annotation. It us
 
 The app lives in the menu bar without a Dock icon. Its menu uses native monochrome icons, with sections for capturing and importing images, opening the main window and settings, and quitting. Annotation windows can still become active and receive keyboard input normally.
 
-SicGo remembers the last annotation tool, color, toolbar configuration, and window position across sessions. When displays change, windows are kept within the visible screen area. New images retain their own aspect ratio. Preferences store interface choices only, not screenshots or annotations.
+SicGo remembers the last annotation tool, color, and window position across sessions. When displays change, windows are kept within the visible screen area. New images retain their own aspect ratio. Preferences store interface choices only, not screenshots or annotations.
 
 ## Interface language
 
@@ -20,9 +20,20 @@ Choose **English**, **简体中文**, or **Follow System**. English is the defau
 
 - **Launch at login:** Uses the native macOS login item service and is off by default. It is enabled only when you select it. If macOS approval is required, SicGo shows a link to System Settings. Opening Settings refreshes the actual system status; a failed change displays an error and returns the control to the current status.
 - **Show main window on launch:** On by default. Turn it off to start with just the menu bar icon. You can still open the main window from the menu, and opening images works as usual.
-- **Remember last tool and color:** On by default. Turn it off to start each new image with the **Default tool** and **Default color** configured in Settings. Temporary tool and color changes while editing do not overwrite those fixed defaults.
+- **Toolbar order:** Settings shows the same row of icons as the editor. Drag an icon to reposition it, or focus it and use the left and right arrow keys. Dropping applies the order to all editor windows and saves it across restarts. Click **Reset order** to restore the original layout. Drop outside the icon row or press Escape to cancel a drag. Reordering does not change existing annotations.
+Tools, colors, and toolbar order are always remembered automatically, with no toggle. Each new image starts with the most recently selected tool and color. Settings has no separate default tool or color controls.
 
-Annotation defaults apply only to newly opened images. Existing annotations are unaffected. Language, annotation, and window preferences are saved automatically; macOS manages the login item status.
+New images use the latest tool and color, while other open editors keep their current state. Language, font, toolbar order, and window position are saved automatically; macOS manages the login item status.
+
+Text uses the system font by default. Settings can select an installed font; the list loads only when opened, with no bundled fonts. This preference is remembered and applies to newly typed annotations. Existing text keeps its font when edited, copied, resized, and exported; unavailable fonts fall back to the system font. The green checkmark is the **Done** action: copy the image and close.
+
+## Updates
+
+**Check for Updates…** is available in the menu bar and Settings. The system URLSession API reads the latest public stable GitHub Release from `sic7en/SicGo`. Numeric version comparison prevents downgrade recommendations; drafts and prereleases are rejected. Missing releases, offline errors, rate limits, and invalid responses show separate messages and allow retrying.
+
+When a newer version is available, **Download Update…** opens its release page. Downloading and replacing the app are manual. Checking does not affect editing or quit the app. Finish your screenshot and quit before installing; preferences are retained.
+
+One request is made only when clicked, without a GitHub login, screenshots, annotations, or preferences. The ephemeral session stores no cookies or disk cache. There are no background timers, automatic downloads, or third-party update frameworks. Responses are limited to 1 MiB and requests time out after 20 seconds.
 
 ## Workflow
 
@@ -38,6 +49,10 @@ Holding Control with a system screenshot shortcut sends the screenshot to the cl
 
 ## Annotation controls
 
+- Copy another image and press Command–V in the editor to add it as a separate image object. Copying an image file in Finder also works. Original files and transparency are preserved. A pasted image is selected and ready to drag; use Select to pick it again later. Corner handles preserve its aspect ratio by default; hold Option to resize freely. Trackpad rotation, duplication, deletion, undo, and redo are supported. Switch to Text, Rectangle, or another drawing tool to annotate over the image.
+- Selected tools use neutral corner brackets without changing their icon colors. Rotating, cropping, or undoing keeps the editor window size and position unchanged; the image is centered and fitted proportionally.
+
+- Select an annotation, press Command–C, then Command–V to paste an editable copy with the same color, size, text, and rotation. The copy is slightly offset and automatically selected, ready to drag. You can also paste it into another open image. Use the toolbar's Copy or Done button to copy the entire image; Command–C also copies the image when no annotation is selected. While typing, the text field handles copy and paste normally.
 - Type text directly on the image. Click outside the text area or move focus elsewhere to finish. Return also finishes editing; Shift–Return inserts a new line, and Escape cancels.
 - Drag completed text directly to move it, or double-click to edit it again. Click other annotations to select them, then drag. With the Select tool, existing annotations can be dragged directly.
 - Drag a corner to resize an annotation. Hold Shift to preserve its proportions. You can add more content inside an outline shape.
@@ -55,13 +70,15 @@ On normal exit, including SIGTERM, SicGo restores the previous screenshot destin
 
 After an unexpected termination, a recovery record allows SicGo to restore the original settings the next time it starts. Files that were not successfully imported may remain in the cache. Old files are not automatically imported or deleted. The cache folder is `~/Library/Caches/local.makstton.SicGo/System Screenshots`.
 
+Pasted images retain their original pixels in memory; preview scaling does not change those pixels. Image imports support up to about 33.5 megapixels, with a 64 MiB limit on image clipboard data.
+
 Annotations and undo history live only in memory and are released when the editor closes. There is no screenshot history, autosave, annotation sidecar storage, or screenshot shelf at the top of the screen. Images copied to the system clipboard remain available until something else replaces them. File reception uses filesystem change notifications, with no periodic directory scanning while idle.
 
 ## Resource use
 
 - The main window and Settings window are created when first needed and reused afterward, avoiding repeated creation and destruction of native controls. Screenshot editors release their images and annotations when closed.
 - During each draw, each pixelated region generates its low-resolution patch once. Later overlapping pixelated regions reuse those patches, which are released after drawing. Preview and copied output retain their existing resolution and drawing order.
-- Undo and redo share a limit of 30 steps and a budget of 128 MiB for additional retained history data. Shared source images are counted once, and the current image is excluded from that budget. History estimates also account for annotation arrays, pen points, and text. The budget is checked after cropping, rotation, undo, and redo. More distant history entries are discarded when the budget is exceeded; the current image is always retained. This budget is not a cap on the app's total memory use.
+- Undo and redo share a limit of 30 steps and a budget of 128 MiB for additional retained history data. Shared source and pasted images are counted once. Images needed by the current canvas are excluded from that budget. History estimates also account for annotation arrays, pen points, and text. The budget is checked after cropping, rotation, undo, and redo. More distant history entries are discarded when the budget is exceeded; the current image is always retained. This budget is not a cap on the app's total memory use.
 
 Run `bash scripts/benchmark.sh` from the project root to measure median rendering time for a 1080p image with different numbers of pixelated regions. Test files and build intermediates are not included in the app bundle.
 
@@ -92,18 +109,26 @@ Run the regression checks:
 bash scripts/check.sh
 ```
 
+## Publishing updates
+
+Increase the version and build in `scripts/build.sh`, then run `bash scripts/check.sh` and `bash scripts/package.sh`. Upload the generated DMG to a **public, non-prerelease GitHub Release** in `sic7en/SicGo`, tag it `vX.Y.Z`, and mark it as the latest release. Publish source and installer for the same version. A source commit or tag alone does not make an update available. Older apps without the check button need one manual update first.
+
 ## Source layout
 
 | File | Responsibility |
 | --- | --- |
-| `App.swift` | App entry point, main window, menus, and opening or pasting images |
+| `App.swift` | App entry point, menus, and opening or pasting images |
+| `HomeWindow.swift` | Native welcome window and capture/import actions |
 | `Capture.swift` | Receiving system screenshots, cleaning up successfully imported files, and restoring screenshot settings |
 | `EditorWindow.swift` | Native toolbar, Copy, and Done actions |
+| `ToolbarLayout.swift` | Toolbar item definitions, drag reordering, and keyboard adjustment |
 | `EditorPreferences.swift` | Lightweight preferences for tools, colors, and window position |
-| `SettingsWindow.swift` | Native settings, live language changes, login items, and annotation defaults |
+| `SettingsWindow.swift` | Native settings, language changes, login items, toolbar order, and fonts |
+| `UpdateChecker.swift` | On-demand GitHub stable-release checks, version comparison, and update state |
 | `Localization.swift` | Interface strings and system language matching |
 | `EditorCanvas.swift` | Clicking, dragging, resizing, rotation, and inline text editing |
 | `EditorDocument.swift` | In-memory images, annotations, undo, and redo |
+| `AnnotationClipboard.swift` | Editable annotation copies, pasted images, and local image file imports without persistent storage |
 | `Drawing.swift` | Annotation geometry, hit testing, and rendering at the image's original resolution |
 
 This is an independently written project with no third-party packages, screenshot history database, or direct screen capture code. macOS manages the global screenshot shortcuts.
