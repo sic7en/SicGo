@@ -28,7 +28,7 @@ For example:
 1. Launch SicGo. It stays in the macOS menu bar.
 2. Press **⌘⇧4** to capture a region. Once macOS finishes the screenshot, it opens automatically in the annotation window.
 3. Use text, arrows, or boxes to point out what you want to change.
-4. Click **Done** to copy the image to the clipboard and close the editor.
+4. Click the green checkmark (**Done**) to copy the image to the clipboard and close the editor.
 5. Paste it into a Codex, Claude Code, or other client that supports image pasting, then add your instructions.
 
 Click **Copy** if you want to keep editing. You can also open a local image or start from an image on the clipboard.
@@ -42,11 +42,17 @@ SicGo prepares the image. It requires no model setup or API key and does not sen
 | Text, arrows, rectangles, ellipses, and a pen | Point out problems and explain the changes you want |
 | Pixelation, cropping, and image rotation | Prepare the image before sharing |
 | Move, resize, and rotate annotations | Adjust marks you have already made |
+| Paste an image onto the current image | Move, resize, and annotate a reference image as a separate object |
 | Undo and redo | Correct changes as you go |
 | Copy, or copy and close | Get the result ready to paste |
-| English and Chinese interfaces, default tools and colors | Set your preferences and keep them between sessions |
+| English and Chinese interfaces, remembered tools and colors | Continue with your last choices, with no extra toggle |
+| Reorder the toolbar | Drag icons in Settings; changes apply immediately and persist |
 
-Type directly on the image and click elsewhere to finish. Drag existing text to move it, or double-click to edit it again.
+Type directly on the image and click elsewhere to finish. Drag existing text to move it, or double-click to edit it again. Text uses the system font by default; choose another installed font in Settings.
+
+Copy another image and press **⌘V** in the editor to add it to the current canvas. It stays editable as a separate object that you can move, resize, rotate, or delete. Rotating the whole image keeps the window size and position unchanged.
+
+Select an annotation and press **⌘C → ⌘V** to make an editable copy with the same color, size, and rotation. Move, resize, or edit the copy, and undo the paste if needed. The toolbar's **Copy** and **Done** buttons always copy the entire image.
 
 ## Lightweight and temporary
 
@@ -66,9 +72,15 @@ While running, SicGo temporarily changes the system screenshot destination and d
 
 The current DMG is for **Apple silicon Macs running macOS 14 or later**.
 
-Open `SicGo-1.3.2-AppleSilicon.dmg`, drag **SicGo** into **Applications**, and launch it.
+Open `SicGo-1.3.3-AppleSilicon.dmg`, drag **SicGo** into **Applications**, and launch it.
 
 The current app uses an ad hoc code signature and has not been notarized by Apple.
+
+## Check for updates
+
+Choose **Check for Updates…** in the menu bar or Settings. When a newer version is available, click **Download Update…** to open its GitHub release page, download the installer, and replace the app.
+
+Checks run only when requested, with no background polling or screenshot uploads. SicGo never quits automatically to update. Finish editing and quit before replacing the app; your preferences are retained.
 
 ## Build from source
 
