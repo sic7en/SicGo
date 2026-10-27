@@ -3,6 +3,7 @@ import AppKit
 enum DrawingTool: String, CaseIterable {
     case select = "Select", rectangle = "Rectangle", ellipse = "Ellipse"
     case arrow = "Arrow", pen = "Pen", text = "Text", mosaic = "Mosaic", crop = "Crop"
+    case image = "Image" // Pasted content, not a drawing-tool button.
 
     var symbol: String {
         switch self {
@@ -14,6 +15,7 @@ enum DrawingTool: String, CaseIterable {
         case .text: return "textformat"
         case .mosaic: return "square.grid.3x3.fill"
         case .crop: return "crop"
+        case .image: return "photo"
         }
     }
 }
@@ -28,6 +30,8 @@ struct Annotation: Equatable {
     var text = ""
     var textLayout = CGSize.zero
     var fontSize: CGFloat = 30
+    var fontName: String? = nil
+    var image: CGImage? = nil
     static let lineWidth: CGFloat = 3
 
     var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
@@ -50,7 +54,7 @@ struct Annotation: Equatable {
     }
     func hit(_ point: CGPoint, tolerance: CGFloat, includeInterior: Bool) -> Bool {
         let p = toLocal(point)
-        if includeInterior || tool == .text || tool == .mosaic {
+        if includeInterior || tool == .text || tool == .mosaic || tool == .image {
             return frame.insetBy(dx: -tolerance, dy: -tolerance).contains(p)
         }
         switch tool {
@@ -131,6 +135,8 @@ enum Drawing {
         ctx.setLineWidth(Annotation.lineWidth); ctx.setLineCap(.round); ctx.setLineJoin(.round)
         let points = mark.resolvedVertices
         switch mark.tool {
+        case .image:
+            if let image = mark.image { ctx.interpolationQuality = .high; ctx.draw(image, in: mark.frame) }
         case .rectangle: ctx.stroke(mark.frame)
         case .ellipse: ctx.strokeEllipse(in: mark.frame)
         case .arrow:
@@ -158,14 +164,17 @@ enum Drawing {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
             (mark.text as NSString).draw(with: CGRect(origin: .zero, size: mark.textLayout),
-                                        options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: textAttributes(mark.color, size: mark.fontSize))
+                                        options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: textAttributes(mark.color, size: mark.fontSize, fontName: mark.fontName))
             NSGraphicsContext.restoreGraphicsState()
             ctx.restoreGState()
         default: break
         }
     }
-    static func textAttributes(_ color: NSColor, size: CGFloat) -> [NSAttributedString.Key: Any] {
+    static func textFont(name: String?, size: CGFloat) -> NSFont {
+        name.flatMap { NSFont(name: $0, size: size) } ?? .systemFont(ofSize: size)
+    }
+    static func textAttributes(_ color: NSColor, size: CGFloat, fontName: String? = nil) -> [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byWordWrapping
-        return [.font: NSFont.systemFont(ofSize: size, weight: .medium), .foregroundColor: color, .paragraphStyle: paragraph]
+        return [.font: textFont(name: fontName, size: size), .foregroundColor: color, .paragraphStyle: paragraph]
     }
 }

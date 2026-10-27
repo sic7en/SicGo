@@ -17,15 +17,12 @@ enum SicGoMain {
 final class SicGoApp: NSObject, NSApplicationDelegate {
     private let inbox = SystemScreenshotInbox()
     private var signals: [DispatchSourceSignal] = []
-    private var home: NSWindow?
+    private var home: HomeWindow?
     private var status: NSStatusItem!
     private var editors: [UUID: EditorWindow] = [:]
     private var openingFiles: [URL] = []
     private var ready = false
-    private var receptionHint: NSTextField?
     private var receptionAvailable = true
-    private var homeDescription: NSTextField?
-    private var homeButtons: [UIString: NSButton] = [:]
     private var settings: SettingsWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -76,6 +73,7 @@ final class SicGoApp: NSObject, NSApplicationDelegate {
         let main = NSMenu(), app = NSMenu(title: "SicGo"), file = NSMenu(title: localized(.file)), edit = NSMenu(title: localized(.edit))
         app.addItem(command(localized(.about), #selector(about)))
         app.addItem(.separator()); app.addItem(command(localized(.settingsMenu), #selector(showSettings), key: ","))
+        app.addItem(command(localized(.checkForUpdates), #selector(checkForUpdates)))
         app.addItem(.separator()); app.addItem(command(localized(.quit), #selector(quit), key: "q"))
         file.addItem(command(localized(.systemScreenshot), #selector(openScreenshot)))
         file.addItem(command(localized(.openImage), #selector(openImage), key: "o"))
@@ -98,43 +96,20 @@ final class SicGoApp: NSObject, NSApplicationDelegate {
         quick.addItem(.separator())
         quick.addItem(command(localized(.show), #selector(showHome), symbol: "macwindow"))
         quick.addItem(command(localized(.settingsMenu), #selector(showSettings), key: ",", symbol: "gearshape"))
+        quick.addItem(command(localized(.checkForUpdates), #selector(checkForUpdates), symbol: "arrow.triangle.2.circlepath"))
         quick.addItem(.separator())
         quick.addItem(command(localized(.quit), #selector(quit), key: "q", symbol: "power"))
         status.menu = quick
     }
     private func buildHome() {
-        let home = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        self.home = home
-        home.title = "SicGo"; home.titlebarAppearsTransparent = true; home.isReleasedWhenClosed = false
-        let icon = NSImageView(image: NSImage(systemSymbolName: "viewfinder", accessibilityDescription: nil)!)
-        icon.symbolConfiguration = .init(pointSize: 40, weight: .light)
-        icon.contentTintColor = .secondaryLabelColor
-        let description = NSTextField(labelWithString: localized(.homeDescription)); homeDescription = description
-        description.font = .systemFont(ofSize: 16, weight: .medium)
-        let capture = NSButton(title: localized(.systemScreenshot), target: self, action: #selector(openScreenshot)); capture.bezelStyle = .rounded
-        capture.keyEquivalent = "\r"
-        let open = NSButton(title: localized(.openImage), target: self, action: #selector(openImage)); open.bezelStyle = .rounded
-        let paste = NSButton(title: localized(.fromClipboard), target: self, action: #selector(pasteImage)); paste.bezelStyle = .rounded
-        let row = NSStackView(views: [open, paste]); row.spacing = 8
-        let hint = NSTextField(labelWithString: localized(receptionAvailable ? .receptionHint : .receptionUnavailable))
-        receptionHint = hint
-        hint.font = .systemFont(ofSize: 11); hint.textColor = .secondaryLabelColor
-        let settingsButton = NSButton(title: localized(.settingsMenu), target: self, action: #selector(showSettings))
-        settingsButton.bezelStyle = .rounded; settingsButton.controlSize = .small
-        homeButtons = [.systemScreenshot: capture, .openImage: open, .fromClipboard: paste, .settingsMenu: settingsButton]
-        let stack = NSStackView(views: [icon, description, capture, row, hint, settingsButton])
-        stack.orientation = .vertical; stack.spacing = 17; stack.translatesAutoresizingMaskIntoConstraints = false
-        let content = NSView(); home.contentView = content; content.addSubview(stack)
-        NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: content.centerXAnchor), stack.centerYAnchor.constraint(equalTo: content.centerYAnchor), capture.widthAnchor.constraint(equalToConstant: 248)])
-        home.center()
-        home.setFrameUsingName("SicGo.Home")
-        home.setFrameAutosaveName("SicGo.Home")
+        let home = HomeWindow(); self.home = home
+        home.capture = { [weak self] in self?.openScreenshot() }
+        home.openImage = { [weak self] in self?.openImage() }
+        home.pasteImage = { [weak self] in self?.pasteImage() }
+        home.openSettings = { [weak self] in self?.showSettings() }
+        updateHomeLocalization()
     }
-    private func updateHomeLocalization() {
-        homeDescription?.stringValue = localized(.homeDescription)
-        receptionHint?.stringValue = localized(receptionAvailable ? .receptionHint : .receptionUnavailable)
-        for (key, button) in homeButtons { button.title = localized(key) }
-    }
+    private func updateHomeLocalization() { home?.updateLocalization(receptionAvailable: receptionAvailable) }
     private func updateLocalization() {
         buildMenus(); updateHomeLocalization(); settings?.updateLocalization()
         editors.values.forEach { $0.updateLocalization() }
@@ -146,13 +121,17 @@ final class SicGoApp: NSObject, NSApplicationDelegate {
         if settings == nil {
             settings = SettingsWindow()
             settings?.languageChanged = { [weak self] in self?.updateLocalization() }
+            settings?.toolbarOrderChanged = { [weak self] in self?.editors.values.forEach { $0.applyToolbarOrder() } }
         }
         settings?.refreshPreferences(); settings?.showWindow(nil); settings?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     @objc private func showHome() {
         if home == nil { buildHome() }
-        home?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        home?.window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+    @objc private func checkForUpdates() {
+        showSettings(); settings?.checkForUpdates()
     }
     @objc private func about() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
@@ -185,11 +164,11 @@ final class SicGoApp: NSObject, NSApplicationDelegate {
         }
     }
     private func present(_ image: CGImage, title: String, titleKey: UIString? = nil) {
-        home?.orderOut(nil)
+        home?.window?.orderOut(nil)
         let id = UUID(), editor = EditorWindow(image: image, title: title, titleKey: titleKey)
         editor.closed = { [weak self] in
             self?.editors.removeValue(forKey: id)
-            if self?.editors.isEmpty == true, self?.settings?.window?.isVisible != true, self?.home?.isVisible != true { NSApp.hide(nil) }
+            if self?.editors.isEmpty == true, self?.settings?.window?.isVisible != true, self?.home?.window?.isVisible != true { NSApp.hide(nil) }
         }
         editors[id] = editor; editor.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
     }

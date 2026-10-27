@@ -13,23 +13,28 @@ struct EditorPreferences {
         get { defaults.object(forKey: "interface.showHomeOnLaunch") as? Bool ?? true }
         nonmutating set { defaults.set(newValue, forKey: "interface.showHomeOnLaunch") }
     }
-    var rememberAnnotation: Bool {
-        get { defaults.object(forKey: "editor.rememberAnnotation") as? Bool ?? true }
-        nonmutating set { defaults.set(newValue, forKey: "editor.rememberAnnotation") }
+    var toolbarOrder: [ToolbarItem] {
+        get { ToolbarItem.normalized((defaults.stringArray(forKey: "editor.toolbarOrder") ?? []).compactMap(ToolbarItem.init(rawValue:))) }
+        nonmutating set { defaults.set(ToolbarItem.normalized(newValue).map(\.rawValue), forKey: "editor.toolbarOrder") }
     }
-    var defaultTool: DrawingTool {
-        get { defaults.string(forKey: "editor.defaultTool").flatMap(DrawingTool.init(rawValue:)) ?? .arrow }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: "editor.defaultTool") }
+    var textFontName: String? {
+        get {
+            guard let name = defaults.string(forKey: "editor.textFontName"), name.utf8.count <= 256,
+                  NSFont(name: name, size: 13) != nil else { return nil }
+            return name
+        }
+        nonmutating set {
+            if let name = newValue, name.utf8.count <= 256, NSFont(name: name, size: 13) != nil {
+                defaults.set(name, forKey: "editor.textFontName")
+            } else { defaults.removeObject(forKey: "editor.textFontName") }
+        }
     }
-    var defaultColor: NSColor {
-        get { readColor(forKey: "editor.defaultColor") }
-        nonmutating set { writeColor(newValue, forKey: "editor.defaultColor") }
-    }
-    var startingTool: DrawingTool { rememberAnnotation ? tool : defaultTool }
-    var startingColor: NSColor { rememberAnnotation ? color : defaultColor }
 
     var tool: DrawingTool {
-        get { defaults.string(forKey: "editor.tool").flatMap(DrawingTool.init(rawValue:)) ?? .arrow }
+        get {
+            let tool = defaults.string(forKey: "editor.tool").flatMap(DrawingTool.init(rawValue:)) ?? .arrow
+            return tool == .image ? .arrow : tool
+        }
         nonmutating set { defaults.set(newValue.rawValue, forKey: "editor.tool") }
     }
     var color: NSColor {

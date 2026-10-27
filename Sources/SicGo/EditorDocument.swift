@@ -26,15 +26,16 @@ final class EditorDocument {
     // Count each retained image once, excluding the mandatory current image. Annotation
     // payloads are counted conservatively even when Swift shares their backing storage.
     var historyByteEstimate: Int {
-        var images: Set<ObjectIdentifier> = [ObjectIdentifier(state.image)]
+        var images = Set(([state.image] + state.marks.compactMap(\.image)).map(ObjectIdentifier.init))
         var bytes = 0
         for snapshot in past + future {
-            if images.insert(ObjectIdentifier(snapshot.image)).inserted {
-                bytes += snapshot.image.bytesPerRow * snapshot.image.height
+            for image in [snapshot.image] + snapshot.marks.compactMap(\.image) where images.insert(ObjectIdentifier(image)).inserted {
+                bytes += image.bytesPerRow * image.height
             }
             bytes += MemoryLayout<State>.stride + snapshot.marks.count * MemoryLayout<Annotation>.stride
             for mark in snapshot.marks {
                 bytes += mark.vertices.count * MemoryLayout<CGPoint>.stride + mark.text.utf8.count
+                bytes += mark.fontName?.utf8.count ?? 0
             }
         }
         return bytes

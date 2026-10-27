@@ -11,13 +11,17 @@ private final class AnnotationTextView: NSTextView {
 }
 
 @MainActor
-final class EditorCanvas: NSView, NSTextViewDelegate {
+final class EditorCanvas: NSView, NSTextViewDelegate, NSUserInterfaceValidations {
     let document: EditorDocument
+    let pasteboard: NSPasteboard
+    private let preferences: EditorPreferences
     var tool: DrawingTool = .arrow { didSet { finishText(); selection = nil; needsDisplay = true; refreshCursor() } }
     var color: NSColor = .systemRed
     var onChange: () -> Void = {}
     var onCopy: () -> Void = {}
     private var selection: UUID?
+    private var pasteChangeCount: Int?
+    private var pasteCount = 0
     private var tracking: NSTrackingArea?
     private var ownsCursor = false
     private enum Drag { case draw, move, handle(Int) }
@@ -31,16 +35,17 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     private var textBefore: EditorDocument.State?
     private var textMark: Annotation?
     private var textOrigin = CGPoint.zero
+    private var editingFontName: String?
     private var rotationBefore: EditorDocument.State?
     private var rotation: CGFloat = 0
 
-    init(document: EditorDocument) {
-        self.document = document
+    init(document: EditorDocument, pasteboard: NSPasteboard = .general, preferences: EditorPreferences = EditorPreferences()) {
+        self.document = document; self.pasteboard = pasteboard; self.preferences = preferences
         super.init(frame: .zero)
         updateLocalization()
         document.changed = { [weak self] in
             guard let self else { return }
-            self.needsDisplay = true; self.onChange()
+            self.needsDisplay = true; self.updateTrackingAreas(); self.onChange()
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -72,9 +77,11 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        let rect = imageRect.intersection(visibleRect)
+        if tracking?.rect == rect { return }
         if let tracking { removeTrackingArea(tracking) }
         // cursorUpdate lets AppKit restore the destination view's cursor on exit.
-        tracking = NSTrackingArea(rect: imageRect.intersection(visibleRect), options: [.activeInKeyWindow, .cursorUpdate, .mouseMoved, .mouseEnteredAndExited], owner: self)
+        tracking = NSTrackingArea(rect: rect, options: [.activeInKeyWindow, .cursorUpdate, .mouseMoved, .mouseEnteredAndExited], owner: self)
         addTrackingArea(tracking!)
     }
     func annotationCursor(at location: CGPoint) -> NSCursor? {
@@ -108,7 +115,8 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     override func mouseExited(with event: NSEvent) { ownsCursor = false }
     private func refreshCursor() {
         guard let window else { return }
-        applyCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if !imageRect.contains(location) { releaseCursor() } else { applyCursor(at: location) }
     }
     func releaseCursor() {
         guard ownsCursor else { return }
@@ -121,6 +129,7 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.saveGState(); defer { ctx.restoreGState() }
+        NSColor.controlBackgroundColor.setFill(); bounds.fill()
         ctx.translateBy(x: imageRect.minX, y: imageRect.minY); ctx.scaleBy(x: scale, y: scale)
         ctx.interpolationQuality = .high
         var marks = document.state.marks
@@ -192,7 +201,7 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
                     let local = rotatePoint(p, around: anchor, by: -original.angle)
                     let sx: CGFloat = h % 2 == 0 ? -1 : 1, sy: CGFloat = h < 2 ? -1 : 1
                     var w = max(6, (local.x - anchor.x) * sx), height = max(6, (local.y - anchor.y) * sy)
-                    if event.modifierFlags.contains(.shift) {
+                    if event.modifierFlags.contains(.shift) || (mark.tool == .image && !event.modifierFlags.contains(.option)) {
                         let ratio = original.frame.width / original.frame.height
                         if w / height > ratio { height = w / ratio } else { w = height * ratio }
                     }
@@ -216,7 +225,7 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     }
     func changeColor(_ color: NSColor) {
         finishText(); self.color = color
-        if let i = selectedIndex { document.change { $0.marks[i].color = color } }
+        if let i = selectedIndex, document.state.marks[i].tool != .image { document.change { $0.marks[i].color = color } }
     }
     func undo() { finishText(); cancelDrag(); selection = nil; document.undo(); refreshCursor() }
     func redo() { finishText(); cancelDrag(); selection = nil; document.redo(); refreshCursor() }
@@ -238,7 +247,45 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
         }
         return super.performKeyEquivalent(with: event)
     }
-    @objc func copy(_ sender: Any?) { onCopy() }
+    @objc func copy(_ sender: Any?) {
+        guard textView == nil, drag == nil else { return }
+        finishRotation(cancel: false)
+        guard let index = selectedIndex else { onCopy(); return }
+        if !AnnotationClipboard.write(document.state.marks[index], to: pasteboard) { NSSound.beep() }
+    }
+    @objc func paste(_ sender: Any?) {
+        guard textView == nil, drag == nil else { return }
+        var mark: Annotation
+        if let copied = AnnotationClipboard.read(from: pasteboard) { mark = copied }
+        else if let image = AnnotationClipboard.readImage(from: pasteboard) {
+            let factor = min(1, document.size.width * 0.7 / CGFloat(image.width), document.size.height * 0.7 / CGFloat(image.height))
+            let size = CGSize(width: CGFloat(image.width) * factor, height: CGFloat(image.height) * factor)
+            mark = Annotation(tool: .image, frame: CGRect(x: (document.size.width - size.width) / 2,
+                y: (document.size.height - size.height) / 2, width: size.width, height: size.height), image: image)
+        } else { return }
+        finishRotation(cancel: false)
+        if pasteChangeCount != pasteboard.changeCount { pasteCount = 0; pasteChangeCount = pasteboard.changeCount }
+        pasteCount += 1
+        let offset = 12 / scale * CGFloat(pasteCount)
+        let corners = mark.handles
+        let xs = corners.map(\.x), ys = corners.map(\.y)
+        func translation(_ desired: CGFloat, _ low: CGFloat, _ high: CGFloat, _ limit: CGFloat) -> CGFloat {
+            high - low <= limit ? min(limit - high, max(-low, desired)) : limit / 2 - (low + high) / 2
+        }
+        let dx = translation(offset, xs.min() ?? mark.frame.minX, xs.max() ?? mark.frame.maxX, document.size.width)
+        let dy = translation(-offset, ys.min() ?? mark.frame.minY, ys.max() ?? mark.frame.maxY, document.size.height)
+        mark.frame = mark.frame.offsetBy(dx: dx, dy: dy)
+        selection = mark.id
+        document.change { $0.marks.append(mark) }
+        window?.makeFirstResponder(self); refreshCursor()
+    }
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)) {
+            return textView == nil && drag == nil && AnnotationClipboard.canPaste(from: pasteboard)
+        }
+        if item.action == #selector(copy(_:)) { return textView == nil && drag == nil }
+        return true
+    }
     override func rotate(with event: NSEvent) {
         if event.phase.contains(.cancelled) { finishRotation(cancel: true); return }
         guard textView == nil, let i = selectedIndex else { return }
@@ -260,6 +307,8 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     }
     private func startText(at p: CGPoint, editing mark: Annotation?) {
         textBefore = document.state; textMark = mark
+        // Existing text keeps its own font; preferences only affect newly typed annotations.
+        editingFontName = mark == nil ? preferences.textFontName : mark?.fontName
         textOrigin = mark.map { CGPoint(x: $0.frame.minX, y: $0.frame.maxY) } ?? p
         if let mark { var next = document.state; next.marks.removeAll { $0.id == mark.id }; document.preview(next) }
         initial = nil; selection = nil; drag = nil
@@ -285,7 +334,7 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
     private func layoutText() {
         guard let field = textView else { return }
         let x = imageRect.minX + textOrigin.x * scale, top = imageRect.minY + textOrigin.y * scale
-        field.font = .systemFont(ofSize: editingFontSize * scale, weight: .medium)
+        field.font = Drawing.textFont(name: editingFontName, size: editingFontSize * scale)
         let available = CGSize(width: max(30, imageRect.maxX - x), height: max(30, top - imageRect.minY))
         guard let container = field.textContainer, let manager = field.layoutManager else { return }
         container.containerSize = available
@@ -309,10 +358,11 @@ final class EditorCanvas: NSView, NSTextViewDelegate {
         textView = nil; textBefore = nil; textMark = nil
         field.editingEnded = {}; field.delegate = nil; field.removeFromSuperview()
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let measured = (text as NSString).boundingRect(with: CGSize(width: available, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: Drawing.textAttributes(ink, size: font))
+            let measured = (text as NSString).boundingRect(with: CGSize(width: available, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: Drawing.textAttributes(ink, size: font, fontName: editingFontName))
             let size = CGSize(width: min(available, ceil(measured.width) + 3), height: max(font * 1.25, ceil(measured.height)))
             var mark = editedMark ?? Annotation(tool: .text, frame: .zero)
             mark.text = text; mark.color = ink; mark.fontSize = font; mark.textLayout = size
+            mark.fontName = editingFontName
             mark.frame = CGRect(x: textOrigin.x, y: textOrigin.y - size.height, width: size.width, height: size.height)
             var next = document.state
             let slot = before.marks.firstIndex { $0.id == mark.id } ?? next.marks.count
