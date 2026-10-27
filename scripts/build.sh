@@ -13,7 +13,7 @@ from pathlib import Path
 info = {
     'CFBundleName': 'SicGo', 'CFBundleDisplayName': 'SicGo',
     'CFBundleIdentifier': 'local.makstton.SicGo', 'CFBundleExecutable': 'SicGo',
-    'CFBundleVersion': '11', 'CFBundleShortVersionString': '1.3.2',
+    'CFBundleVersion': '18', 'CFBundleShortVersionString': '1.3.3',
     'NSHumanReadableCopyright': '© 2026 Sic7en',
     'CFBundlePackageType': 'APPL', 'CFBundleDevelopmentRegion': 'en',
     'LSMinimumSystemVersion': '14.0', 'NSHighResolutionCapable': True, 'LSUIElement': True,
